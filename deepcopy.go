@@ -3,6 +3,7 @@ package deepcopy
 import (
 	"fmt"
 	. "reflect"
+	"time"
 )
 
 type copier func(interface{}, map[uintptr]interface{}) (interface{}, error)
@@ -81,6 +82,12 @@ func _anything(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error)
 }
 
 func _slice(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
+
+	if ValueOf(x).IsNil() {
+		t := TypeOf(x)
+		return Zero(t).Interface(), nil
+	}
+
 	v := ValueOf(x)
 	if v.Kind() != Slice {
 		return nil, fmt.Errorf("must pass a value with kind of Slice; got %v", v.Kind())
@@ -103,6 +110,12 @@ func _slice(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
 }
 
 func _map(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
+
+	if ValueOf(x).IsNil() {
+		t := TypeOf(x)
+		return Zero(t).Interface(), nil
+	}
+
 	v := ValueOf(x)
 	if v.Kind() != Map {
 		return nil, fmt.Errorf("must pass a value with kind of Map; got %v", v.Kind())
@@ -115,17 +128,31 @@ func _map(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to clone map item %v: %v", iter.Key().Interface(), err)
 		}
-		k, err := _anything(iter.Key().Interface(), ptrs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to clone the map key %v: %v", k, err)
+		k := iter.Key()
+
+		// we honor the reflect.DeepEqual way of equality and do not copy the keys
+		// k, err := _anything(iter.Key().Interface(), ptrs)
+		// if err != nil {
+		// 	return nil, fmt.Errorf("failed to clone the map key %v: %v", k, err)
+		// }
+
+		if item == nil {
+			dc.SetMapIndex(k, iter.Value())
+		} else {
+			dc.SetMapIndex(k, ValueOf(item))
 		}
-		dc.SetMapIndex(ValueOf(k), ValueOf(item))
 	}
 	return dc.Interface(), nil
 }
 
 func _pointer(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
+
 	v := ValueOf(x)
+	if v.IsNil() {
+		t := TypeOf(x)
+		return Zero(t).Interface(), nil
+	}
+
 	if v.Kind() != Ptr {
 		return nil, fmt.Errorf("must pass a value with kind of Ptr; got %v", v.Kind())
 	}
@@ -136,16 +163,16 @@ func _pointer(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) 
 	t := TypeOf(x)
 	dc := New(t.Elem())
 	ptrs[addr] = dc.Interface()
-	if !v.IsNil() {
-		item, err := _anything(v.Elem().Interface(), ptrs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to copy the value under the pointer %v: %v", v, err)
-		}
-		iv := ValueOf(item)
-		if iv.IsValid() {
-			dc.Elem().Set(ValueOf(item))
-		}
+
+	item, err := _anything(v.Elem().Interface(), ptrs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy the value under the pointer %v: %v", v, err)
 	}
+	iv := ValueOf(item)
+	if iv.IsValid() {
+		dc.Elem().Set(ValueOf(item))
+	}
+
 	return dc.Interface(), nil
 }
 
@@ -155,6 +182,16 @@ func _struct(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("must pass a value with kind of Struct; got %v", v.Kind())
 	}
 	t := TypeOf(x)
+
+	// handle explicitly time.Time objects
+	if t.PkgPath() == "time" && t.Name() == "Time" {
+		tempTime, ok := x.(time.Time)
+		if ok {
+			newTime := tempTime
+			return newTime, nil
+		}
+	}
+
 	dc := New(t)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -165,7 +202,9 @@ func _struct(x interface{}, ptrs map[uintptr]interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy the field %v in the struct %#v: %v", t.Field(i).Name, x, err)
 		}
-		dc.Elem().Field(i).Set(ValueOf(item))
+		if item != nil {
+			dc.Elem().Field(i).Set(ValueOf(item))
+		}
 	}
 	return dc.Elem().Interface(), nil
 }

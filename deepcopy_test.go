@@ -4,6 +4,7 @@ import (
 	"fmt"
 	. "reflect"
 	"testing"
+	"time"
 )
 
 func ExampleAnything() {
@@ -39,29 +40,49 @@ func ExampleAnything() {
 	// [Jell-O Grape-Nuts]
 }
 
-type Foo struct {
-	Foo *Foo
-	Bar int
-}
-
 func ExampleMap() {
+
+	type Inner struct {
+		Value int
+	}
+
+	type Foo struct {
+		Inner *Inner
+		Bar   int
+	}
+
 	x := map[string]*Foo{
-		"foo": &Foo{Bar: 1},
-		"bar": &Foo{Bar: 2},
+		"elem1": &Foo{
+			Inner: &Inner{Value: 3},
+			Bar:   1,
+		},
+		"elem2": &Foo{
+			Inner: nil,
+			Bar:   2,
+		},
 	}
+
 	y := MustAnything(x).(map[string]*Foo)
-	for _, k := range []string{"foo", "bar"} { // to ensure consistent order
-		fmt.Printf("x[\"%v\"] = y[\"%v\"]: %v\n", k, k, x[k] == y[k])
-		fmt.Printf("x[\"%v\"].Foo = y[\"%v\"].Foo: %v\n", k, k, x[k].Foo == y[k].Foo)
-		fmt.Printf("x[\"%v\"].Bar = y[\"%v\"].Bar: %v\n", k, k, x[k].Bar == y[k].Bar)
-	}
+
+	fmt.Printf("x[elem1] = y[elem1]: %v\n", x["elem1"] == y["elem1"])
+	fmt.Printf("x[elem1].Inner = y[elem1].Inner: %v\n", x["elem1"].Inner == y["elem1"].Inner)
+	fmt.Printf("x[elem1].Inner = y[elem1].Inner: %v\n", *x["elem1"].Inner == *y["elem1"].Inner)
+	fmt.Printf("x[elem1].Bar = y[elem1].Bar: %v\n", x["elem1"].Bar == y["elem1"].Bar)
+
+	fmt.Printf("x[elem2] = y[elem2]: %v\n", x["elem2"] == y["elem2"])
+	fmt.Printf("x[elem2].Inner = y[elem2].Inner: %v\n", x["elem2"].Inner == y["elem2"].Inner)
+	fmt.Printf("x[elem2].Inner = nil: %v\n", x["elem2"].Inner == nil)
+	fmt.Printf("x[elem2].Bar = y[elem2].Bar: %v\n", x["elem2"].Bar == y["elem2"].Bar)
+
 	// Output:
-	// x["foo"] = y["foo"]: false
-	// x["foo"].Foo = y["foo"].Foo: false
-	// x["foo"].Bar = y["foo"].Bar: true
-	// x["bar"] = y["bar"]: false
-	// x["bar"].Foo = y["bar"].Foo: false
-	// x["bar"].Bar = y["bar"].Bar: true
+	// x[elem1] = y[elem1]: false
+	// x[elem1].Inner = y[elem1].Inner: false
+	// x[elem1].Inner = y[elem1].Inner: true
+	// x[elem1].Bar = y[elem1].Bar: true
+	// x[elem2] = y[elem2]: false
+	// x[elem2].Inner = y[elem2].Inner: true
+	// x[elem2].Inner = nil: true
+	// x[elem2].Bar = y[elem2].Bar: true
 }
 
 func TestInterface(t *testing.T) {
@@ -78,6 +99,12 @@ func TestInterface(t *testing.T) {
 }
 
 func ExampleAvoidInfiniteLoops() {
+
+	type Foo struct {
+		Foo *Foo
+		Bar int
+	}
+
 	x := &Foo{
 		Bar: 4,
 	}
@@ -150,5 +177,351 @@ func TestMismatchedTypesFail(t *testing.T) {
 				t.Errorf("%v attempted value %v as %v; should have gotten an error", test.kind, test.input, kind)
 			}
 		}
+	}
+}
+
+func TestNilMaps(t *testing.T) {
+	type Foo struct {
+		A int
+	}
+
+	type Bar struct {
+		A  map[string]Foo
+		Aa map[string]Foo
+		B  map[string]*Foo
+		Bb map[string]*Foo
+		C  *map[string]*Foo
+		Cc *map[string]*Foo
+		D  map[*Foo]int
+	}
+
+	src := Bar{
+		A: map[string]Foo{
+			"t1": {A: 7},
+			"t2": {A: 8},
+		},
+		Aa: nil,
+		B: map[string]*Foo{
+			"t1": {A: 7},
+			"t2": nil,
+		},
+		Bb: nil,
+		C: &map[string]*Foo{
+			"t1": nil,
+		},
+		Cc: nil,
+		D: map[*Foo]int{
+			{A: 9}: 3,
+			nil:    6,
+		},
+	}
+
+	dst := MustAnything(src)
+	dstTyped, ok := dst.(Bar)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src.C == dstTyped.C {
+		t.Errorf("pointers are equal, expect %p != %p; ", src.C, dstTyped.C)
+	}
+	if src.Cc != nil || dstTyped.Cc != nil {
+		t.Errorf("pointers are not nil, expect %p == nil; %p == nil; ", src.Cc, dstTyped.Cc)
+	}
+	if src.B["t1"] == dstTyped.B["t1"] {
+		t.Errorf("pointers are equal, expect %p != %p; ", src.C, dstTyped.C)
+	}
+	if src.B["t2"] != nil || dstTyped.B["t2"] != nil {
+		t.Errorf("pointers are not nil, expect %p == nil; %p == nil; ", src.B["t2"], dstTyped.B["t2"])
+	}
+	if src.Bb != nil || dstTyped.Bb != nil {
+		t.Errorf("pointers are not nil, expect %p == nil; %p == nil; ", src.Bb, dstTyped.Bb)
+	}
+
+	if !DeepEqual(src, dstTyped) {
+		t.Errorf("expect %v == %v", src, dstTyped)
+	}
+}
+
+func TestNilSlice(t *testing.T) {
+	type Foo struct {
+		A []string
+		B []string
+	}
+
+	src := Foo{
+		A: []string{"t1", "t2"},
+		B: nil,
+	}
+	dst := MustAnything(src)
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v == %v; ", src, dst)
+	}
+}
+
+func TestNilPointer(t *testing.T) {
+	type Foo struct {
+		A int
+	}
+	type Bar struct {
+		B int
+	}
+	type FooBar struct {
+		Foo  *Foo
+		Bar  *Bar
+		Foo2 *Foo
+		Bar2 *Bar
+	}
+
+	src := &FooBar{
+		Foo2: &Foo{1},
+		Bar2: &Bar{2},
+	}
+
+	dst := MustAnything(src)
+	dstTyped, ok := dst.(*FooBar)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src.Foo != nil || dstTyped.Foo != nil {
+		t.Errorf("pointers are not nil, expect %p == nil; %p == nil; ", src.Foo, dstTyped.Foo)
+	}
+	if src.Bar != nil || dstTyped.Bar != nil {
+		t.Errorf("pointers are not nil, expect %p == nil; %p == nil; ", src.Bar, dstTyped.Bar)
+	}
+	if src.Foo2 == dstTyped.Foo2 {
+		t.Errorf("pointers are equal, expect %p != %p; ", src.Foo2, dstTyped.Foo2)
+	}
+	if src.Bar2 == dstTyped.Bar2 {
+		t.Errorf("pointers are equal, expect %p != %p; ", src.Bar2, dstTyped.Bar2)
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v == %v; ", src, dst)
+	}
+
+}
+
+func TestStructTime(t *testing.T) {
+	type Foo struct {
+		Time1 time.Time
+		Time2 time.Time
+	}
+
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
+	src := Foo{
+		Time1: time.Now().In(location),
+		Time2: time.Now().UTC(),
+	}
+	dst := MustAnything(src)
+
+	dstTyped, ok := dst.(Foo)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src.Time1.Format(time.RFC3339Nano) != dstTyped.Time1.Format(time.RFC3339Nano) {
+		t.Errorf("Time1 is not equal, expect %v == %v; ", src.Time1, dstTyped.Time1)
+	}
+	if !src.Time1.Equal(dstTyped.Time1) {
+		t.Errorf("Time1 is not equal, expect %v == %v; ", src.Time1, dstTyped.Time1)
+	}
+
+	if src.Time2.Format(time.RFC3339Nano) != dstTyped.Time2.Format(time.RFC3339Nano) {
+		t.Errorf("Time2 is not equal, expect %v == %v; ", src.Time2, dstTyped.Time1)
+	}
+	if !src.Time2.Equal(dstTyped.Time2) {
+		t.Errorf("Time2 is not equal, expect %v == %v; ", src.Time2, dstTyped.Time2)
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v ==", src)
+		t.Errorf("    == %v; ", dst)
+	}
+}
+
+func TestSliceTime(t *testing.T) {
+
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
+	src := make([]time.Time, 2)
+	src[0] = time.Now().In(location)
+	src[1] = time.Now().UTC()
+
+	dst := MustAnything(src)
+
+	dstTyped, ok := dst.([]time.Time)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src[0].Format(time.RFC3339Nano) != dstTyped[0].Format(time.RFC3339Nano) {
+		t.Errorf("src[0] is not equal, expect %v == %v; ", src[0], dstTyped[0])
+	}
+	if !src[0].Equal(dstTyped[0]) {
+		t.Errorf("src[0] is not equal, expect %v == %v; ", src[0], dstTyped[0])
+	}
+
+	if src[1].Format(time.RFC3339Nano) != dstTyped[1].Format(time.RFC3339Nano) {
+		t.Errorf("src[1] is not equal, expect %v == %v; ", src[1], dstTyped[1])
+	}
+	if !src[1].Equal(dstTyped[1]) {
+		t.Errorf("src[1] is not equal, expect %v == %v; ", src[1], dstTyped[1])
+	}
+
+	if &src[0] == &dstTyped[0] {
+		t.Errorf("pointers are equal, expect %p != %p; ", &src[0], &dstTyped[0])
+	}
+
+	if &src[1] == &dstTyped[1] {
+		t.Errorf("pointers are equal, expect %p != %p; ", &src[1], &dstTyped[1])
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v ==", src)
+		t.Errorf("    == %v; ", dst)
+	}
+}
+
+func TestSliceTimePointer(t *testing.T) {
+
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
+	src := make([]*time.Time, 2)
+	temp := time.Now().In(location)
+	src[0] = &temp
+	temp = time.Now().UTC()
+	src[1] = &temp
+
+	dst := MustAnything(src)
+
+	dstTyped, ok := dst.([]*time.Time)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src[0].Format(time.RFC3339Nano) != dstTyped[0].Format(time.RFC3339Nano) {
+		t.Errorf("src[0] is not equal, expect %v == %v; ", src[0], dstTyped[0])
+	}
+	if !src[0].Equal(*dstTyped[0]) {
+		t.Errorf("src[0] is not equal, expect %v == %v; ", src[0], dstTyped[0])
+	}
+
+	if src[1].Format(time.RFC3339Nano) != dstTyped[1].Format(time.RFC3339Nano) {
+		t.Errorf("src[1] is not equal, expect %v == %v; ", src[1], dstTyped[1])
+	}
+	if !src[1].Equal(*dstTyped[1]) {
+		t.Errorf("src[1] is not equal, expect %v == %v; ", src[1], dstTyped[1])
+	}
+
+	if src[0] == dstTyped[0] {
+		t.Errorf("pointers are equal, expect %p != %p; ", &src[0], &dstTyped[0])
+	}
+
+	if src[1] == dstTyped[1] {
+		t.Errorf("pointers are equal, expect %p != %p; ", &src[1], &dstTyped[1])
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v ==", src)
+		t.Errorf("    == %v; ", dst)
+	}
+}
+
+func TestMapTime(t *testing.T) {
+
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
+	src := make(map[string]time.Time)
+	src["t1"] = time.Now().In(location)
+	src["t2"] = time.Now().UTC()
+
+	dst := MustAnything(src)
+
+	dstTyped, ok := dst.(map[string]time.Time)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src["t1"].Format(time.RFC3339Nano) != dstTyped["t1"].Format(time.RFC3339Nano) {
+		t.Errorf("src[t1] is not equal, expect %v == %v; ", src["t1"], dstTyped["t1"])
+	}
+	if !src["t1"].Equal(dstTyped["t1"]) {
+		t.Errorf("src[t1] is not equal, expect %v == %v; ", src["t1"], dstTyped["t1"])
+	}
+
+	if src["t2"].Format(time.RFC3339Nano) != dstTyped["t2"].Format(time.RFC3339Nano) {
+		t.Errorf("src[t2] is not equal, expect %v == %v; ", src["t2"], dstTyped["t2"])
+	}
+	if !src["t2"].Equal(dstTyped["t2"]) {
+		t.Errorf("src[t2] is not equal, expect %v == %v; ", src["t2"], dstTyped["t2"])
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v ==", src)
+		t.Errorf("    == %v; ", dst)
+	}
+}
+
+func TestMapTimePointer(t *testing.T) {
+
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
+	src := make(map[string]*time.Time)
+	temp := time.Now().In(location)
+	src["t1"] = &temp
+	temp = time.Now().UTC()
+	src["t2"] = &temp
+
+	dst := MustAnything(src)
+
+	dstTyped, ok := dst.(map[string]*time.Time)
+	if !ok {
+		t.Errorf("failed to convert to concrete type after deepCopy")
+	}
+
+	if src["t1"].Format(time.RFC3339Nano) != dstTyped["t1"].Format(time.RFC3339Nano) {
+		t.Errorf("src[t1] is not equal, expect %v == %v; ", src["t1"], dstTyped["t1"])
+	}
+	if !src["t1"].Equal(*dstTyped["t1"]) {
+		t.Errorf("src[t1] is not equal, expect %v == %v; ", src["t1"], dstTyped["t1"])
+	}
+
+	if src["t2"].Format(time.RFC3339Nano) != dstTyped["t2"].Format(time.RFC3339Nano) {
+		t.Errorf("src[t2] is not equal, expect %v == %v; ", src["t2"], dstTyped["t2"])
+	}
+	if !src["t2"].Equal(*dstTyped["t2"]) {
+		t.Errorf("src[t2] is not equal, expect %v == %v; ", src["t2"], dstTyped["t2"])
+	}
+
+	if src["t1"] == dstTyped["t1"] {
+		t.Errorf("pointers are equal, expect %p != %p; ", src["t1"], dstTyped["t1"])
+	}
+
+	if src["t2"] == dstTyped["t2"] {
+		t.Errorf("pointers are equal, expect %p != %p; ", src["t2"], dstTyped["t2"])
+	}
+
+	if !DeepEqual(src, dst) {
+		t.Errorf("expect %v ==", src)
+		t.Errorf("    == %v; ", dst)
 	}
 }
